@@ -6,3 +6,5 @@ I know almost nothing about coding.
 And less than nothing about github.
 
 Thats it. 
+
+github is scary.
