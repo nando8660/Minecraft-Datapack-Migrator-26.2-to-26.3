@@ -1,6 +1,7 @@
 """Sistema de patch para datapacks migrados."""
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import datetime
@@ -35,10 +36,8 @@ def criar_manifest(datapack_path: Path, nome: str, uuid_valor: str | None = None
     for arquivo in datapack_path.rglob("*"):
         if arquivo.is_file() and arquivo.name not in (".migration_manifest.json", ".datapack_uuid"):
             relativo = str(arquivo.relative_to(datapack_path)).replace("\\", "/")
-            stat = arquivo.stat()
             manifest["arquivos"][relativo] = {
-                "tamanho": stat.st_size,
-                "modificado": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                "hash": hashlib.md5(arquivo.read_bytes()).hexdigest()
             }
 
     caminho_manifest = datapack_path / ".migration_manifest.json"
@@ -58,7 +57,8 @@ def ler_uuid(datapack_path: Path) -> str | None:
 
 
 def ler_manifest(datapack_path: Path) -> dict | None:
-    """Le .migration_manifest.json. Retorna None se nao existir."""
+    """Le .migration_manifest.json. Retorna None se nao existir.
+    Se o manifesto estiver no formato antigo (tamanho/data), reconstrói com hash."""
     caminho = datapack_path / ".migration_manifest.json"
     if not caminho.exists():
         return None
@@ -71,6 +71,12 @@ def ler_manifest(datapack_path: Path) -> dict | None:
         elif "uuid" not in data:
             data["uuid"] = str(uuid.uuid4())
             caminho.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Detecta formato antigo (tem "tamanho" em vez de "hash") e reconstrói
+        arquivos = data.get("arquivos", {})
+        if arquivos and any("hash" not in v for v in arquivos.values()):
+            # Reconstrói manifest com hashes
+            nome = data.get("datapack", datapack_path.name)
+            return criar_manifest(datapack_path, nome, data.get("uuid"))
         return data
     except (json.JSONDecodeError, KeyError):
         return None
@@ -91,17 +97,16 @@ def verificar_integridade(datapack_path: Path, manifest: dict) -> bool:
 def comparar_com_manifest(datapack_path: Path, manifest: dict) -> dict:
     """Compara estado atual do datapack com o manifest.
     Retorna {modificados, adicionados, removidos}.
+    Usa hash MD5 do conteudo para detectar qualquer mudanca, independente do timestamp.
     """
     arquivos_manifest = manifest.get("arquivos", {})
     estado_atual = {}
 
     for arquivo in datapack_path.rglob("*"):
-        if arquivo.is_file() and arquivo.name != ".migration_manifest.json":
+        if arquivo.is_file() and arquivo.name not in (".migration_manifest.json", ".datapack_uuid"):
             relativo = str(arquivo.relative_to(datapack_path)).replace("\\", "/")
-            stat = arquivo.stat()
             estado_atual[relativo] = {
-                "tamanho": stat.st_size,
-                "modificado": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                "hash": hashlib.md5(arquivo.read_bytes()).hexdigest()
             }
 
     modificados = []
@@ -110,8 +115,7 @@ def comparar_com_manifest(datapack_path: Path, manifest: dict) -> dict:
 
     for rel, info in estado_atual.items():
         if rel in arquivos_manifest:
-            if info["tamanho"] != arquivos_manifest[rel].get("tamanho") or \
-               info["modificado"] != arquivos_manifest[rel].get("modificado"):
+            if info["hash"] != arquivos_manifest[rel].get("hash"):
                 modificados.append(rel)
         else:
             adicionados.append(rel)

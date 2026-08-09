@@ -24,6 +24,7 @@ from migrator.core.zip_handler import eh_zip, extrair_zip, adicionar_ao_zip, lim
 from migrator.ui.terminal.ui import (
     Menu, MenuSelecao, GerenciadorLista, ItemMenu, Cor, limpar_tela, escrever,
 )
+from migrator.ui.terminal.input import read_key
 
 
 def carregar_config() -> dict:
@@ -51,7 +52,6 @@ def _config_padrao() -> dict:
         "patch_ativo": 0,
         "nome_saida_ativo": 0,
         "versao": "snapshot7",
-        "overlay_completo": True,
         "modo_flat": False,
         "patch_pos_migracao": False,
         "aplicar_patch": False,
@@ -83,42 +83,47 @@ def menu_principal(config: dict) -> str | None:
         ItemMenu("toggle", "Sair aqui", referencia="sair_aqui"),
         ItemMenu("separador", ""),
         ItemMenu("toggle", "Modo", referencia="modo_flat"),
-        ItemMenu("toggle", "Overlay completo", referencia="overlay_completo", sufixo="não afeta modo flat"),
         ItemMenu("toggle", "Aplicar patch pos-migracao", referencia="patch_pos_migracao"),
         ItemMenu("separador", ""),
         ItemMenu("botao", "Migrar", referencia="migrar"),
         ItemMenu("submenu", "Patch ->", referencia="patch_menu"),
     ]
 
-    menu = Menu("MIGRADOR DE DATAPACK", items, config=config, salvar_fn=lambda: salvar_config(config))
-    cursor_salvo = 0
-
-    while True:
+    def atualizar_estado():
         idx_dp = config.get("datapack_ativo", 0)
         idx_out = config.get("output_ativo", 0)
-        idx_patch = config.get("patch_ativo", 0)
         idx_nome = config.get("nome_saida_ativo", 0)
 
         nome_dp = datapacks[idx_dp]["nome"] if datapacks else "(nenhum)"
         nome_out = outputs[idx_out]["nome"] if outputs else "(nenhum)"
-        nome_patch = patches[idx_patch]["nome"] if patches else "(nenhum)"
         nome_arquivo = nomes_saida[idx_nome]["nome"] if nomes_saida else "(nenhum)"
         versao_label = VERSIONS.get(config.get("versao", "snapshot7"), {}).get("label", "?")
-        patch_dest = config.get("patch_destino", "")
 
-        # Atualiza labels dinamicos
+        # Caminho de saida = output + nome do arquivo selecionado
+        caminho_out = ""
+        if outputs:
+            caminho_base = outputs[idx_out].get("caminho", "")
+            caminho_out = str(Path(caminho_base) / nome_arquivo) if nome_arquivo != "(nenhum)" else caminho_base
+
         items[0].rotulo = f"Datapack: {nome_dp}"
+        items[0].caminho = datapacks[idx_dp].get("caminho", "") if datapacks else ""
         items[1].rotulo = f"Versao alvo: {versao_label}"
+        items[1].caminho = ""
         items[2].rotulo = f"Saida: {nome_out}"
-        items[2].habilitado = not config.get("modo_flat", False)
+        items[2].habilitado = not config.get("sair_aqui", False)
+        items[2].caminho = caminho_out
         items[3].rotulo = f"Nome do arquivo: {nome_arquivo}"
+        items[3].caminho = ""
 
         items[4].valor = config.get("sair_aqui", False)
-
         items[6].valor = config.get("modo_flat", False)
-        items[7].valor = config.get("overlay_completo", True)
-        items[8].valor = config.get("patch_pos_migracao", False)
+        items[7].valor = config.get("patch_pos_migracao", False)
 
+    menu = Menu("MIGRADOR DE DATAPACK", items, config=config, salvar_fn=lambda: salvar_config(config), atualizar_fn=atualizar_estado)
+    cursor_salvo = 0
+
+    while True:
+        atualizar_estado()
         menu.items = items
         menu.cursor = cursor_salvo
         resultado = menu.executar()
@@ -184,6 +189,7 @@ def menu_patch(config: dict) -> str | None:
     while True:
         patch_dest = config.get("patch_destino", "")
         items[0].rotulo = f"Onde salvar Patches: {patch_dest or '(nao definido)'}"
+        items[0].caminho = patch_dest if patch_dest else ""
 
         menu.items = items
         menu.cursor = cursor_salvo
@@ -248,17 +254,30 @@ def executar_migracao(config: dict) -> str:
         else:
             destination = PROJECT_ROOT / "output"
     else:
-        destination = Path(outputs[idx_out]["caminho"])
+        # Usa nome do arquivo selecionado no caminho de saida
+        caminho_base = outputs[idx_out]["caminho"] if outputs else ""
+        destination = Path(caminho_base) / nome_arquivo if nome_arquivo and nome_arquivo != "(nenhum)" else Path(caminho_base)
+
+    # Subdividir output em flat/overlay quando sair_aqui
+    if config.get("sair_aqui", False):
+        modo_flat = config.get("modo_flat", False)
+        idx_nome = config.get("nome_saida_ativo", 0)
+        nomes_saida = config.get("nomes_saida", [])
+        nome_arquivo = nomes_saida[idx_nome]["nome"] if nomes_saida else "datapack"
+        subpasta = "flat" if modo_flat else "overlay"
+        destination = PROJECT_ROOT / "output" / subpasta / nome_arquivo
 
     version = config.get("versao", "snapshot7")
-    overlay_completo = config.get("overlay_completo", True)
     modo_flat = config.get("modo_flat", False)
+
+    # Flat sempre copia tudo; overlay só copia modificados
+    copy_unchanged = True if modo_flat else False
 
     options = MigrationOptions(
         destination=destination,
         mode="flat_datapack" if modo_flat else "new_datapack",
         target_version=version,
-        copy_unchanged=overlay_completo,
+        copy_unchanged=copy_unchanged,
     )
 
     if modo_flat:
@@ -285,7 +304,7 @@ def executar_migracao(config: dict) -> str:
     salvar_config(config)
 
     # Aplicar patch automatico se configurado
-    if config.get("aplicar_patch", False):
+    if config.get("patch_pos_migracao", False):
         patch_dest = Path(config.get("patch_destino", "."))
         if patch_dest.exists():
             patch_compativel = buscar_patch_compativel(destination, patch_dest)
@@ -293,6 +312,10 @@ def executar_migracao(config: dict) -> str:
                 escrever(f"\n  [INFO] Patch compativel encontrado: {patch_compativel.name}")
                 stats = aplicar_patch(destination, patch_compativel)
                 escrever(f"  [INFO] Patch aplicado: {stats['copiados']} copiados, {stats['removidos']} removidos")
+            else:
+                escrever(f"\n  [INFO] Nenhum patch compativel encontrado em {patch_dest}")
+        else:
+            escrever(f"\n  [INFO] Pasta de patches nao encontrada: {patch_dest}")
 
     # Limpa temp se foi extraido de zip
     limpar_temp()
@@ -303,13 +326,18 @@ def executar_migracao(config: dict) -> str:
 def executar_criar_patch(config: dict) -> dict:
     """Acao de criar patch."""
     idx_out = config.get("output_ativo", 0)
+    idx_nome = config.get("nome_saida_ativo", 0)
     outputs = config.get("outputs", [])
+    nomes_saida = config.get("nomes_saida", [])
     patch_destino = Path(config.get("patch_destino", "."))
 
     if not outputs:
         return {"erro": "Nenhuma saida configurada!"}
 
-    datapack_path = Path(outputs[idx_out]["caminho"])
+    # Usa nome do arquivo selecionado
+    nome_arquivo = nomes_saida[idx_nome]["nome"] if nomes_saida else None
+    caminho_base = outputs[idx_out]["caminho"] if outputs else ""
+    datapack_path = Path(caminho_base) / nome_arquivo if nome_arquivo else Path(caminho_base)
     if not datapack_path.exists():
         return {"erro": f"Datapack nao encontrado: {datapack_path}"}
 
@@ -334,13 +362,18 @@ def executar_criar_patch(config: dict) -> dict:
 def executar_aplicar_patch(config: dict) -> dict:
     """Acao de aplicar patch."""
     idx_out = config.get("output_ativo", 0)
+    idx_nome = config.get("nome_saida_ativo", 0)
     outputs = config.get("outputs", [])
+    nomes_saida = config.get("nomes_saida", [])
     patch_destino = Path(config.get("patch_destino", "."))
 
     if not outputs:
         return {"erro": "Nenhuma saida configurada!"}
 
-    datapack_path = Path(outputs[idx_out]["caminho"])
+    # Usa nome do arquivo selecionado
+    nome_arquivo = nomes_saida[idx_nome]["nome"] if nomes_saida else None
+    caminho_base = outputs[idx_out]["caminho"] if outputs else ""
+    datapack_path = Path(caminho_base) / nome_arquivo if nome_arquivo else Path(caminho_base)
     if not datapack_path.exists():
         return {"erro": f"Datapack nao encontrado: {datapack_path}"}
 
@@ -357,6 +390,9 @@ def executar_aplicar_patch(config: dict) -> dict:
     patch_path = patches[0]
 
     stats = aplicar_patch(datapack_path, patch_path)
+    # Atualiza manifest para o estado atual (pos-patch)
+    nome_base = datapack_path.name
+    criar_manifest(datapack_path, nome_base)
     return {
         "patch_path": str(patch_path),
         "copiados": stats["copiados"],
@@ -430,57 +466,65 @@ def escrever_relatorio(resumo: str, post_count: int, post_files: list[str]):
 # ========== MAIN ==========
 
 def main():
-    limpar_tela()
-    escrever(f"{Cor.NEGRITO}MIGRADOR DE DATAPACK{Cor.RESET}\n  Carregando...\n")
-    config = carregar_config()
-
-    # UI - menu principal
-    acao = menu_principal(config)
-    if not acao:
+    while True:
         limpar_tela()
-        escrever("Cancelado.\n")
-        return 0
+        escrever(f"{Cor.NEGRITO}MIGRADOR DE DATAPACK{Cor.RESET}\n  Carregando...\n")
+        config = carregar_config()
 
-    # Executa acao
-    limpar_tela()
+        # UI - menu principal
+        acao = menu_principal(config)
+        if not acao:
+            limpar_tela()
+            escrever("Cancelado.\n")
+            return 0
 
-    if acao == "migrar":
-        escrever(f"{Cor.NEGRITO}MIGRANDO...{Cor.RESET}\n\n")
-        try:
-            resumo = executar_migracao(config)
-            escrever(resumo)
-        except Exception as e:
-            escrever(f"\n{Cor.ERRO}[ERRO] {e}{Cor.RESET}\n")
-            import traceback
-            traceback.print_exc()
-            return 1
+        # Executa acao
+        limpar_tela()
 
-        escrever_relatorio(resumo, 0, [])
-        escrever(f"\n  Relatorio salvo em: {REPORT_PATH}\n")
+        if acao == "migrar":
+            escrever(f"{Cor.NEGRITO}MIGRANDO...{Cor.RESET}\n\n")
+            try:
+                resumo = executar_migracao(config)
+                escrever(resumo)
+            except Exception as e:
+                escrever(f"\n{Cor.ERRO}[ERRO] {e}{Cor.RESET}\n")
+                import traceback
+                traceback.print_exc()
+                escrever(f"\n  {Cor.DESABILITADO}Pressione qualquer tecla para voltar...{Cor.RESET}")
+                read_key()
+                continue
 
-    elif acao == "criar_patch":
-        escrever(f"{Cor.NEGRITO}CRIANDO PATCH...{Cor.RESET}\n\n")
-        resultado = executar_criar_patch(config)
-        if "erro" in resultado:
-            escrever(f"\n{Cor.ERRO}[ERRO] {resultado['erro']}{Cor.RESET}\n")
-            return 1
-        escrever(f"  Patch criado: {resultado['patch_path']}\n")
-        escrever(f"  Modificados: {resultado['modificados']}\n")
-        escrever(f"  Adicionados: {resultado['adicionados']}\n")
-        escrever(f"  Removidos: {resultado['removidos']}\n")
+            escrever_relatorio(resumo, 0, [])
+            escrever(f"\n  Relatorio salvo em: {REPORT_PATH}\n")
 
-    elif acao == "aplicar_patch":
-        escrever(f"{Cor.NEGRITO}APLICANDO PATCH...{Cor.RESET}\n\n")
-        resultado = executar_aplicar_patch(config)
-        if "erro" in resultado:
-            escrever(f"\n{Cor.ERRO}[ERRO] {resultado['erro']}{Cor.RESET}\n")
-            return 1
-        escrever(f"  Patch aplicado: {resultado['patch_path']}\n")
-        escrever(f"  Copiados: {resultado['copiados']}\n")
-        escrever(f"  Removidos: {resultado['removidos']}\n")
+        elif acao == "criar_patch":
+            escrever(f"{Cor.NEGRITO}CRIANDO PATCH...{Cor.RESET}\n\n")
+            resultado = executar_criar_patch(config)
+            if "erro" in resultado:
+                escrever(f"\n{Cor.ERRO}[ERRO] {resultado['erro']}{Cor.RESET}\n")
+                escrever(f"\n  {Cor.DESABILITADO}Pressione qualquer tecla para voltar...{Cor.RESET}")
+                read_key()
+                continue
+            escrever(f"  Patch criado: {resultado['patch_path']}\n")
+            escrever(f"  Modificados: {resultado['modificados']}\n")
+            escrever(f"  Adicionados: {resultado['adicionados']}\n")
+            escrever(f"  Removidos: {resultado['removidos']}\n")
 
-    escrever(f"\n  {Cor.SELECAO} CONCLUIDO! {Cor.RESET}\n")
-    return 0
+        elif acao == "aplicar_patch":
+            escrever(f"{Cor.NEGRITO}APLICANDO PATCH...{Cor.RESET}\n\n")
+            resultado = executar_aplicar_patch(config)
+            if "erro" in resultado:
+                escrever(f"\n{Cor.ERRO}[ERRO] {resultado['erro']}{Cor.RESET}\n")
+                escrever(f"\n  {Cor.DESABILITADO}Pressione qualquer tecla para voltar...{Cor.RESET}")
+                read_key()
+                continue
+            escrever(f"  Patch aplicado: {resultado['patch_path']}\n")
+            escrever(f"  Copiados: {resultado['copiados']}\n")
+            escrever(f"  Removidos: {resultado['removidos']}\n")
+
+        escrever(f"\n  {Cor.SELECAO} CONCLUIDO! {Cor.RESET}\n")
+        escrever(f"\n  {Cor.DESABILITADO}Pressione qualquer tecla para voltar ao menu...{Cor.RESET}")
+        read_key()
 
 
 if __name__ == "__main__":

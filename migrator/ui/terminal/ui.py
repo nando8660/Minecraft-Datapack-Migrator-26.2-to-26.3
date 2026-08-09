@@ -60,25 +60,34 @@ class ItemMenu:
     referencia: str = ""  # chave no config
     sufixo: str = ""       # texto discreto em cinza (ex: "não afeta modo flat")
     acao: Callable | None = None
+    caminho: str = ""      # caminho para abrir com 'E'
 
 
 class Menu:
     """Menu interativo com navegação por setas."""
 
-    def __init__(self, titulo: str, items: list[ItemMenu], cursor_inicial: int = 0, config: dict = None, salvar_fn=None):
+    def __init__(self, titulo: str, items: list[ItemMenu], cursor_inicial: int = 0, config: dict = None, salvar_fn=None, atualizar_fn=None):
         self.titulo = titulo
         self.items = items
         self.cursor = cursor_inicial
         self.config = config or {}
         self.salvar_fn = salvar_fn
+        self.atualizar_fn = atualizar_fn
         self._mover_cursor_valido(0)
 
     def _salvar_toggle(self, item: ItemMenu):
         """Salva valor do toggle no config e persiste."""
         if item.referencia and item.tipo == "toggle":
+            item.valor = not item.valor
             self.config[item.referencia] = item.valor
             if self.salvar_fn:
                 self.salvar_fn()
+            # Recalcula estados dependentes (ex: Saida cinza quando sair_aqui)
+            if self.atualizar_fn:
+                self.atualizar_fn()
+            # Se cursor ficou em item desabilitado, move pro próximo válido
+            if not self.items[self.cursor].habilitado and self.items[self.cursor].tipo != "separador":
+                self._mover_cursor_valido(1)
 
     def _mover_cursor_valido(self, direcao: int):
         """Move cursor ignorando itens desabilitados e separadores."""
@@ -110,10 +119,18 @@ class Menu:
                 sufixo = ""
 
             texto = self._formatar_item(item)
+            # Indicador de caminho (⌁E)
+            if item.caminho:
+                if i == self.cursor:
+                    texto_caminho = f"  ⌁E"
+                else:
+                    texto_caminho = f"  {Cor.DESABILITADO}⌁E{Cor.RESET}"
+            else:
+                texto_caminho = ""
             # Sufixo (texto discreto em cinza)
             texto_sufixo = f"  {Cor.DESABILITADO}{item.sufixo}{Cor.RESET}" if item.sufixo and i != self.cursor else ""
-            escrever(f"  {cor_inicio}{prefixo}{texto}{sufixo}{texto_sufixo}\n")
-        escrever(f"\n  {Cor.DESABILITADO}↑↓ Enter | Q Voltar{Cor.RESET}\n")
+            escrever(f"  {cor_inicio}{prefixo}{texto}{sufixo}{texto_caminho}{texto_sufixo}\n")
+        escrever(f"\n  {Cor.DESABILITADO}↑↓ Enter | E Abrir | Q Voltar{Cor.RESET}\n")
 
     def _formatar_item(self, item: ItemMenu) -> str:
         if item.tipo == "toggle":
@@ -136,15 +153,37 @@ class Menu:
                 self._mover_cursor_valido(-1)
             elif tecla == "down":
                 self._mover_cursor_valido(1)
+            elif tecla == "e":
+                item = self.items[self.cursor]
+                if item.caminho:
+                    self._abrir_caminho(item.caminho)
             elif tecla == "enter":
                 item = self.items[self.cursor]
                 if item.tipo == "toggle":
-                    item.valor = not item.valor
                     self._salvar_toggle(item)
                 elif item.tipo in ("submenu", "acao", "botao"):
                     return (item.tipo, item.referencia, self.cursor)
             elif tecla == "q":
                 return ("sair", None, self.cursor)
+
+    @staticmethod
+    def _abrir_caminho(caminho: str):
+        """Abre caminho no explorer ou aplicação padrão.
+        Se não existe, abre o primeiro pai que existe."""
+        import os
+        try:
+            if os.path.isdir(caminho) or os.path.isfile(caminho):
+                os.startfile(caminho)
+                return
+            # Sobe na árvore até encontrar um diretório que existe
+            atual = os.path.dirname(caminho)
+            while atual and atual != os.path.dirname(atual):
+                if os.path.isdir(atual):
+                    os.startfile(atual)
+                    return
+                atual = os.path.dirname(atual)
+        except Exception:
+            pass
 
 
 class MenuSelecao:
