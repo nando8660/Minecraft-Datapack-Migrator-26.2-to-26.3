@@ -57,11 +57,6 @@ def _restructure_entity_predicate(ep: dict, result: MigrationResult):
     if not isinstance(ep, dict):
         return
 
-    # type → minecraft:entity_type (S4-08)
-    if "type" in ep and "minecraft:entity_type" not in ep:
-        ep["minecraft:entity_type"] = ep.pop("type")
-        result.add_change("Renomeado 'type' → 'minecraft:entity_type' em entity predicate")
-
     # killer → attacker, etc (S4-09)
     renames = {
         "killer": "attacker",
@@ -162,31 +157,28 @@ def convert_block_state_property(data: Any, result: MigrationResult) -> Any:
                          FileType.LOOT_TABLE, FileType.ITEM_MODIFIER,
                          FileType.ENCHANTMENT])
 def rename_condition_to_type_recursive(data: Any, result: MigrationResult) -> Any:
-    """Renomear 'condition' → 'type' recursivamente em predicates (S4-01).
-
-    Renomeia apenas quando 'condition' parece ser um discriminador de tipo
-    (o objeto tem outros campos de predicate como 'entity', 'predicate',
-    'block', 'properties', etc.), NÃO quando é um nome de campo como
-    pool.condition ou entry.condition.
-    """
-    if not isinstance(data, dict):
-        return data
-    if "condition" in data and "type" not in data and "function" not in data:
-        # Verifica se parece um predicate wrapper (tem campos de predicate)
-        predicate_indicators = {"entity", "predicate", "block", "blocks",
-                                "properties", "state", "terms", "chance",
-                                "term"}
-        if any(ind in data for ind in predicate_indicators):
-            data["type"] = data.pop("condition")
-            result.add_change("Renomeado 'condition' → 'type'")
-    for value in data.values():
-        if isinstance(value, dict):
+    """Renomear 'condition' → 'type' recursivamente (S4-01)."""
+    if isinstance(data, dict):
+        if "condition" in data and "type" not in data and "function" not in data:
+            pool_entry_indicators = {"rolls", "entries", "modifier", "weight", "quality"}
+            has_pool = any(ind in data for ind in pool_entry_indicators)
+            if not has_pool:
+                data["type"] = data.pop("condition")
+                result.add_change("Renomeado 'condition' → 'type'")
+        for value in data.values():
             rename_condition_to_type_recursive(value, result)
-        elif isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    rename_condition_to_type_recursive(item, result)
+    elif isinstance(data, list):
+        for item in data:
+            rename_condition_to_type_recursive(item, result)
     return data
+
+
+@register("snapshot5", [FileType.PREDICATE, FileType.ADVANCEMENT,
+                        FileType.LOOT_TABLE, FileType.ITEM_MODIFIER,
+                        FileType.ENCHANTMENT])
+def rename_condition_to_type_recursive_post(data: Any, result: MigrationResult) -> Any:
+    """Segunda passagem de condition → type para pegar casos criados por migrations S4."""
+    return rename_condition_to_type_recursive(data, result)
 
 
 @register("snapshot4", [FileType.PREDICATE, FileType.ITEM_MODIFIER,

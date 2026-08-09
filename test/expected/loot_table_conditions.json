@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:entity",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "minecraft:diamond",
+          "condition": {
+            "type": "minecraft:random_chance",
+            "chance": 0.5
+          }
+        }
+      ],
+      "condition": {
+        "type": "minecraft:killed_by_player"
+      }
+    }
+  ]
+}

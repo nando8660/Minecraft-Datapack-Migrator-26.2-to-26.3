@@ -1,0 +1,18 @@
+{
+  "datapacks": [],
+  "outputs": [],
+  "patches": [],
+  "nomes_saida": [],
+  "datapack_ativo": 0,
+  "output_ativo": 0,
+  "patch_ativo": 0,
+  "nome_saida_ativo": 0,
+  "versao": "snapshot7",
+  "overlay_completo": true,
+  "modo_flat": true,
+  "patch_pos_migracao": false,
+  "aplicar_patch": false,
+  "sair_aqui": false,
+  "patch_destino": "",
+  "ultimo_caminho": ""
+}

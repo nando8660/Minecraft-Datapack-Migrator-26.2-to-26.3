@@ -1,1 +1,0 @@
-"""Interface do usuário"""

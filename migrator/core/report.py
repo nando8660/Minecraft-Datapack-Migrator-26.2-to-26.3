@@ -30,6 +30,8 @@ class MigrationReport:
     files_modified: int = 0
     files_unchanged: int = 0
     files_with_errors: int = 0
+    overlay_copied: int = 0
+    overlay_skipped: int = 0
     total_changes: int = 0
     total_warnings: int = 0
     total_errors: int = 0
@@ -73,6 +75,8 @@ class MigrationReport:
             f"Arquivos atualizados (novo overlay): {self.files_modified}",
             f"Arquivos inalterados (mantidos): {self.files_unchanged}",
             f"Arquivos com erros: {self.files_with_errors}",
+            f"Overlay - copiados: {self.overlay_copied}",
+            f"Overlay - pulados (nao modificados): {self.overlay_skipped}",
             f"Total de alterações: {self.total_changes}",
             f"Total de avisos: {self.total_warnings}",
             f"Total de erros: {self.total_errors}",

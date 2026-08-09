@@ -65,25 +65,19 @@ def rename_function_to_type_recursive(data: Any, result: MigrationResult) -> Any
     return data
 
 
-@register("snapshot4", [FileType.PREDICATE, FileType.ADVANCEMENT,
-                         FileType.LOOT_TABLE, FileType.ITEM_MODIFIER])
-def rename_condition_to_type_recursive(data: Any, result: MigrationResult) -> Any:
-    """Renomear 'condition' → 'type' recursivamente em predicates.
+def _rename_condition_to_type_recursive_np(data: Any, result: MigrationResult) -> Any:
+    """Renomear 'condition' → 'type' recursivamente (versão number_providers).
 
-    Em 26.3, predicates usam 'type' em vez de 'condition'.
-    Aplica-se a predicates em qualquer nivel de aninhamento.
+    Não registra via @register - a versão de predicate.py já cobre estes FileTypes.
     """
     if isinstance(data, dict):
         if ("condition" in data and "type" not in data
                 and "function" not in data):
             cond_val = data.get("condition")
-            # Verifica se o valor de 'condition' parece um tipo de predicate
-            # (string com namespace 'minecraft:' ou 'modid:')
             should_rename = False
             if isinstance(cond_val, str) and ":" in cond_val:
                 should_rename = True
             else:
-                # Verifica indicadores de predicate
                 predicate_indicators = {"entity", "predicate", "block", "blocks",
                                         "properties", "state", "terms", "chance",
                                         "unenchanted_chance", "enchanted_chance",
@@ -94,8 +88,8 @@ def rename_condition_to_type_recursive(data: Any, result: MigrationResult) -> An
                 data["type"] = data.pop("condition")
                 result.add_change("Renomeado 'condition' → 'type' em predicate")
         for value in data.values():
-            rename_condition_to_type_recursive(value, result)
+            _rename_condition_to_type_recursive_np(value, result)
     elif isinstance(data, list):
         for item in data:
-            rename_condition_to_type_recursive(item, result)
+            _rename_condition_to_type_recursive_np(item, result)
     return data

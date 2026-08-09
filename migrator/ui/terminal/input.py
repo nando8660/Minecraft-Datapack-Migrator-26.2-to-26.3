@@ -1,41 +1,28 @@
-"""Interface de terminal - Entrada por teclado."""
+"""Input de teclado para terminal."""
 from __future__ import annotations
 
 import sys
-import os
 
-if sys.platform == "win32":
-    import msvcrt
 
-    def read_key() -> str:
+def read_key() -> str:
+    """Lê uma tecla e retorna string semântica."""
+    if sys.platform == "win32":
+        import msvcrt
         ch = msvcrt.getwch()
-        if ch in ("\x00", "\xe0"):
+        if ch in ("\x00", "à"):
             ch2 = msvcrt.getwch()
-            if ch2 == "H":
-                return "up"
-            if ch2 == "P":
-                return "down"
-            if ch2 == "K":
-                return "left"
-            if ch2 == "M":
-                return "right"
-            if ch2 == "s":
-                return "left"
-            if ch2 == "d":
-                return "right"
-            return ""
+            return {
+                "H": "up", "P": "down", "K": "left", "M": "right",
+            }.get(ch2, ch2)
         if ch == "\r":
             return "enter"
-        if ch == "\x1b":
+        if ch in ("\x1b", "q", "Q"):
             return "q"
-        if ch.lower() == "q":
+        if ch == "\x03":
             return "q"
-        return ""
-else:
-    import tty
-    import termios
-
-    def read_key() -> str:
+        return ch
+    else:
+        import tty, termios
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
@@ -45,19 +32,14 @@ else:
                 ch2 = sys.stdin.read(1)
                 if ch2 == "[":
                     ch3 = sys.stdin.read(1)
-                    if ch3 == "A":
-                        return "up"
-                    if ch3 == "B":
-                        return "down"
-                    if ch3 == "C":
-                        return "right"
-                    if ch3 == "D":
-                        return "left"
+                    return {
+                        "A": "up", "B": "down", "C": "right", "D": "left",
+                    }.get(ch3, ch3)
                 return "q"
-            if ch == "\r":
+            if ch in ("\r", "\n"):
                 return "enter"
-            if ch.lower() == "q":
+            if ch in ("q", "Q", "\x03"):
                 return "q"
-            return ""
+            return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)

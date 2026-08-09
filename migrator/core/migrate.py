@@ -229,18 +229,41 @@ def write_migrated_file(scanned: ScannedFile, dest_file: Path):
             f.write(scanned.original_content)
 
 
+def _fix_filter_paths(filter_data: dict) -> dict:
+    """Corrigir paths no filter.block para usar formato regex correto.
+
+    O Minecraft espera que o campo 'path' seja uma regex.
+    Transforma 'recipe/tnt.json' em '/tnt.json' (regex que termina com /tnt.json).
+    """
+    if not filter_data:
+        return filter_data
+    block = filter_data.get("block", [])
+    for entry in block:
+        path_val = entry.get("path", "")
+        # Se o path contém '/', transformar em regex '/filename.ext'
+        if "/" in path_val:
+            filename = path_val.rsplit("/", 1)[-1]
+            entry["path"] = f"/{filename}"
+    return filter_data
+
+
 def update_pack_mcmeta(destination: Path, overlay_name: str, target_format: int):
     """Atualiza o pack.mcmeta com o novo overlay e formato máximo.
 
     - Atualiza pack.max_format para [target_format, 0]
     - Atualiza max_format de todos os overlays para [target_format, 0]
     - Adiciona o novo overlay com min_format e max_format = [target_format, 0]
+    - Corrige paths do filter.block para formato regex
     """
     path = destination / "pack.mcmeta"
     if not path.exists():
         return
 
     data = json.loads(path.read_text(encoding="utf-8"))
+
+    # Corrigir filter paths antes de qualquer coisa
+    if "filter" in data:
+        data["filter"] = _fix_filter_paths(data["filter"])
 
     # Atualizar max_format do pack raiz
     pack = data.get("pack", {})
@@ -319,10 +342,14 @@ def migrate_datapack(source: Path, options: MigrationOptions) -> MigrationReport
         file_report = process_file(scanned, options.target_version)
         report.add_file_report(file_report)
 
-        # Escrever TODOS os arquivos efetivos no novo overlay
-        # (não apenas os modificados) para garantir que o overlay
-        # novo contenha o datapack completo e migrado
-        write_migrated_file(scanned, dest_overlay / rel)
+        # Escrever no overlay:
+        # - Se copy_unchanged=True: copia TODOS os arquivos (overlay autocontido)
+        # - Se copy_unchanged=False: copia só os modificados (economiza espaco)
+        if options.copy_unchanged or file_report.modified:
+            write_migrated_file(scanned, dest_overlay / rel)
+            report.overlay_copied += 1
+        else:
+            report.overlay_skipped += 1
 
     # 5. Atualizar pack.mcmeta
     update_pack_mcmeta(destination, overlay_name, target_format)
